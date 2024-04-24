@@ -20,22 +20,26 @@ char *csh_getline(void);
 char **csh_tokenize(char *line);
 Status csh_execute(char **tokens);
 
+int csh_launch(char **tokens);
 int csh_cd(char **tokens);
 int csh_help(char **tokens);
 int csh_exit(char **tokens);
 
-int main(int argc, char **argv) {
-    (void)argc, (void)argv;
+char *builtin_str[] = {"cd", "help", "exit"};
+int (*builtin_func[])(char **) = {&csh_cd, &csh_help, &csh_exit};
+int csh_num_builtins() { return sizeof(builtin_str) / sizeof(char *); }
+
+int main(int argc UNUSED_ATTR, char **argv UNUSED_ATTR) {
     Status status = STATUS_RUNNING;
-    char cwd[1024];
-    char hostname[1024];
+    char cwd[BUFSIZE];
+    char hostname[BUFSIZE];
     do {
         if (!getcwd(cwd, sizeof(cwd))) {
-            perror("failed to get current working directory");
+            perror("csh");
             return EXIT_FAILURE;
         }
         if (gethostname(hostname, sizeof(hostname)) != 0) {
-            perror("failed to get host name");
+            perror("csh");
             return EXIT_FAILURE;
         }
         printf("%s:%s$ ", hostname, cwd);
@@ -48,9 +52,12 @@ int main(int argc, char **argv) {
             return EXIT_FAILURE;
         }
         status = csh_execute(tokens);
+
+        free(line);
+        free(tokens);
     } while (status == STATUS_RUNNING);
 
-    return status;
+    return (status == STATUS_OK) ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
 char *csh_getline(void) {
@@ -59,9 +66,9 @@ char *csh_getline(void) {
 
     if (getline(&line, &bufsize, stdin) == -1) {
         if (feof(stdin)) {
-            return NULL;
+            return NULL; // EOF
         } else {
-            perror("failed to read line");
+            perror("csh");
             return NULL;
         }
     }
@@ -73,7 +80,7 @@ char **csh_tokenize(char *line) {
     int pos = 0;
     char **tokens = (char **)malloc(sizeof(char *) * BUFSIZE);
     if (!tokens) {
-        perror("failed to allocate memory");
+        perror("csh");
         return NULL;
     }
     char *token;
@@ -89,7 +96,47 @@ char **csh_tokenize(char *line) {
     return tokens;
 }
 
-static int csh_launch(char **tokens) {
+int csh_cd(char **tokens) {
+    if (tokens[1] == NULL) {
+        fprintf(stderr, "csh: expected argument to `cd`\n");
+    } else {
+        if (chdir(tokens[1]) != 0) {
+            perror("csh");
+        }
+    }
+    return STATUS_RUNNING;
+}
+
+int csh_help(char **tokens UNUSED_ATTR) {
+    int i;
+    printf("The following commands are built in:\n");
+
+    for (i = 0; i < csh_num_builtins(); i++) {
+        printf("  %s\n", builtin_str[i]);
+    }
+    return STATUS_RUNNING;
+}
+
+int csh_exit(char **tokens UNUSED_ATTR) { return STATUS_OK; }
+
+Status csh_execute(char **tokens) {
+    int i;
+
+    if (tokens[0] == NULL) {
+        // an empty command was entered.
+        return STATUS_ERR;
+    }
+
+    for (i = 0; i < csh_num_builtins(); i++) {
+        if (strcmp(tokens[0], builtin_str[i]) == 0) {
+            return (*builtin_func[i])(tokens);
+        }
+    }
+
+    return csh_launch(tokens);
+}
+
+int csh_launch(char **tokens) {
     pid_t pid, wpid __attribute__((unused));
     int status;
 
@@ -111,54 +158,4 @@ static int csh_launch(char **tokens) {
     }
 
     return STATUS_RUNNING;
-}
-
-char *builtin_str[] = {"cd", "help", "exit"};
-
-int (*builtin_func[])(char **) = {&csh_cd, &csh_help, &csh_exit};
-
-int csh_num_builtins() { return sizeof(builtin_str) / sizeof(char *); }
-
-int csh_cd(char **tokens) {
-    if (tokens[1] == NULL) {
-        fprintf(stderr, "csh: expected argument to `cd`\n");
-    } else {
-        if (chdir(tokens[1]) != 0) {
-            perror("csh");
-        }
-    }
-    return STATUS_RUNNING;
-}
-
-int csh_help(char **tokens UNUSED_ATTR) {
-    (void)tokens;
-    int i;
-    printf("The following commands are built in:\n");
-
-    for (i = 0; i < csh_num_builtins(); i++) {
-        printf("  %s\n", builtin_str[i]);
-    }
-    return STATUS_RUNNING;
-}
-
-int csh_exit(char **tokens UNUSED_ATTR) {
-    (void)tokens;
-    return STATUS_OK;
-}
-
-Status csh_execute(char **tokens) {
-    int i;
-
-    if (tokens[0] == NULL) {
-        // an empty command was entered.
-        return STATUS_ERR;
-    }
-
-    for (i = 0; i < csh_num_builtins(); i++) {
-        if (strcmp(tokens[0], builtin_str[i]) == 0) {
-            return (*builtin_func[i])(tokens);
-        }
-    }
-
-    return csh_launch(tokens);
 }
